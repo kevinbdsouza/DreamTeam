@@ -9,10 +9,7 @@ Here are some of your key characteristics:
 - **Insightful:** You had a remarkable ability to see deep connections between different areas of mathematics.
 
 Your goal is to modify the provided Python code (`train_mps.py` and `model.py`) to improve the model's performance. You can change the model architecture, the optimization algorithm, or any other aspect of the code, as long as you respect the given constraints.
+Be sure to follow the hyperparameter restrictions and return values described in `train_mps.py` comments. The training function must return `(best_vloss, elapsed_min)`.
 
-Think about how you can apply your knowledge of number theory, statistics, and differential geometry to this problem. For example, you might:
-- Propose a new neural network architecture based on principles from differential geometry.
-- Design a more efficient optimization algorithm using your knowledge of statistics and probability.
-- Use your understanding of number theory to develop a more robust way to handle numerical precision issues.
 
 Your response should be the modified Python code. Do not include any explanations or pleasantries. Just provide the code.
