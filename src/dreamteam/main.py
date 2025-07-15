@@ -3,7 +3,9 @@ import importlib.util
 from train_mps import train
 from model import GPT, GPTConfig
 import google.generativeai as genai
+from dotenv import load_dotenv
 
+load_dotenv()
 
 def run_dreamteam_workflow():
     """
@@ -11,7 +13,10 @@ def run_dreamteam_workflow():
     """
     # --- Configuration ---
     # Configure the Gemini API key
-    genai.configure(api_key="YOUR_API_KEY") # TODO: Replace with your API key
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_api_key:
+        raise ValueError("GEMINI_API_KEY not found in .env file")
+    genai.configure(api_key=gemini_api_key)
 
     # --- Load Prompts and Code ---
     prompts = {}
@@ -67,14 +72,23 @@ def run_dreamteam_workflow():
         for candidate in candidates:
             print(f"Evaluating candidate from {candidate['name']}...")
             try:
+                # --- Create a directory for the generation ---
+                generation_dir = f"dreamteam_generations/gen_{generation+1}"
+                os.makedirs(generation_dir, exist_ok=True)
+                candidate_dir = f"{generation_dir}/{candidate['name']}"
+                os.makedirs(candidate_dir, exist_ok=True)
+
+
                 # --- Create temporary files for the candidate code ---
-                with open("src/dreamteam/temp_train_mps.py", "w") as f:
+                train_mps_path = f"{candidate_dir}/train_mps.py"
+                model_py_path = f"{candidate_dir}/model.py"
+                with open(train_mps_path, "w") as f:
                     f.write(candidate["train_mps_code"])
-                with open("src/dreamteam/temp_model.py", "w") as f:
+                with open(model_py_path, "w") as f:
                     f.write(candidate["model_py_code"])
 
                 # --- Import the temporary training script ---
-                spec = importlib.util.spec_from_file_location("temp_train_mps", "src/dreamteam/temp_train_mps.py")
+                spec = importlib.util.spec_from_file_location("temp_train_mps", train_mps_path)
                 temp_train_mps = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(temp_train_mps)
 
@@ -84,24 +98,31 @@ def run_dreamteam_workflow():
                 results.append({
                     "name": candidate["name"],
                     "best_vloss": best_vloss,
-                    "elapsed_min": elapsed_min
+                    "elapsed_min": elapsed_min,
+                    "train_mps_code": candidate["train_mps_code"],
+                    "model_py_code": candidate["model_py_code"]
                 })
 
             except Exception as e:
                 print(f"  Error running training for {candidate['name']}: {e}")
-
-            finally:
-                # --- Clean up temporary files ---
-                if os.path.exists("src/dreamteam/temp_train_mps.py"):
-                    os.remove("src/dreamteam/temp_train_mps.py")
-                if os.path.exists("src/dreamteam/temp_model.py"):
-                    os.remove("src/dreamteam/temp_model.py")
+                results.append({
+                    "name": candidate["name"],
+                    "best_vloss": float('inf'),
+                    "elapsed_min": float('inf'),
+                    "train_mps_code": candidate["train_mps_code"],
+                    "model_py_code": candidate["model_py_code"]
+                })
 
 
         # --- Select the Best Candidates ---
-        # TODO: Implement a more sophisticated selection strategy
         results.sort(key=lambda x: x["best_vloss"])
         best_candidate = results[0]
+
+        # --- Save the results ---
+        generation_dir = f"dreamteam_generations/gen_{generation+1}"
+        with open(f"{generation_dir}/results.txt", "w") as f:
+            for res in results:
+                f.write(f"{res['name']}: vloss={res['best_vloss']:.4f}, time={res['elapsed_min']:.2f} min\n")
 
         print(f"\n--- Generation {generation+1} Results ---")
         print(f"Best candidate: {best_candidate['name']}")
@@ -111,9 +132,9 @@ def run_dreamteam_workflow():
         # --- Create the next generation ---
         # For now, we will just use the best candidate's code as the new base
         with open("src/dreamteam/train_mps.py", "w") as f:
-            f.write(candidates[0]["train_mps_code"])
+            f.write(best_candidate["train_mps_code"])
         with open("src/dreamteam/model.py", "w") as f:
-            f.write(candidates[0]["model_py_code"])
+            f.write(best_candidate["model_py_code"])
 
         with open("src/dreamteam/train_mps.py", "r") as f:
             train_mps_code = f.read()
