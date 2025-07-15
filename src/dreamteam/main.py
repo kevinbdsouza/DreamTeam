@@ -4,6 +4,7 @@ from train_mps import train
 from model import GPT, GPTConfig
 import google.generativeai as genai
 from dotenv import load_dotenv
+import shutil
 
 load_dotenv()
 
@@ -11,6 +12,9 @@ def run_dreamteam_workflow():
     """
     This is the main function that orchestrates the DreamTeam workflow.
     """
+    shutil.copyfile("train_mps.py", "train_mps_bck.py")
+    shutil.copyfile("model.py", "model_bck.py")
+
     # --- Configuration ---
     # Configure the Gemini API key
     gemini_api_key = os.getenv("GEMINI_API_KEY")
@@ -20,18 +24,17 @@ def run_dreamteam_workflow():
 
     # --- Load Prompts and Code ---
     prompts = {}
-    prompt_files = os.listdir("src/dreamteam/prompts")
-    for file_name in prompt_files:
-        with open(f"src/dreamteam/prompts/{file_name}", "r") as f:
+    prompt_files = os.listdir("prompts")
+    for file_name in prompt_files[:2]:
+        with open(f"prompts/{file_name}", "r") as f:
             prompts[file_name.replace(".txt", "")] = f.read()
 
-    with open("src/dreamteam/train_mps.py", "r") as f:
+    with open("train_mps.py", "r") as f:
         train_mps_code = f.read()
-    with open("src/dreamteam/model.py", "r") as f:
+    with open("model.py", "r") as f:
         model_py_code = f.read()
 
     # --- Evolutionary Algorithm ---
-    population_size = len(prompts)
     num_generations = 3 # TODO: Adjust as needed
 
     for generation in range(num_generations):
@@ -42,7 +45,7 @@ def run_dreamteam_workflow():
         for name, prompt in prompts.items():
             print(f"Generating candidate from {name}...")
             # Create a Gemini client
-            model = genai.GenerativeModel('gemini-pro')
+            model = genai.GenerativeModel('gemini-2.5-flash')
 
             # Construct the full prompt
             full_prompt = f"{prompt}\n\nHere is the code to modify:\n\n`train_mps.py`:\n```python\n{train_mps_code}\n```\n\n`model.py`:\n```python\n{model_py_code}\n```"
@@ -131,14 +134,14 @@ def run_dreamteam_workflow():
 
         # --- Create the next generation ---
         # For now, we will just use the best candidate's code as the new base
-        with open("src/dreamteam/train_mps.py", "w") as f:
+        with open("train_mps.py", "w") as f:
             f.write(best_candidate["train_mps_code"])
-        with open("src/dreamteam/model.py", "w") as f:
+        with open("model.py", "w") as f:
             f.write(best_candidate["model_py_code"])
 
-        with open("src/dreamteam/train_mps.py", "r") as f:
+        with open("train_mps.py", "r") as f:
             train_mps_code = f.read()
-        with open("src/dreamteam/model.py", "r") as f:
+        with open("model.py", "r") as f:
             model_py_code = f.read()
 
 
