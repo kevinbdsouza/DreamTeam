@@ -76,5 +76,3 @@ def train():
     # this should be returned, should not change
     return best_vloss, elapsed_min
 
-if __name__ == "__main__":
-    best_vloss, elapsed_min = train()
