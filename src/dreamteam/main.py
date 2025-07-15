@@ -1,8 +1,9 @@
 import os
 import importlib.util
-from dreamteam.train_mps import train
-from dreamteam.model import GPT, GPTConfig
+from train_mps import train
+from model import GPT, GPTConfig
 import google.generativeai as genai
+
 
 def run_dreamteam_workflow():
     """
