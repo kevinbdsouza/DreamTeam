@@ -33,32 +33,12 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # Initial learning rate: The initial "momentum" for exploring the parameter space.
-    learning_rate = 3e-4
-    # Minimum learning rate: Where the "wave function" of parameters largely settles.
-    min_learning_rate = 3e-5 # A tenth of the initial rate.
-    # Warmup iterations: A period to linearly increase the "momentum" before decay,
-    # ensuring initial exploration without premature localization.
-    warmup_iters = 100
-
-    # Model dropout: Introducing "quantum fluctuations" to prevent over-certainty.
-    # This reflects the inherent uncertainty principle in the model's internal "state."
-    model_dropout = 0.1 # Changed from 0.0 to introduce a tangible effect.
-
-    # Function to determine the learning rate based on iteration.
-    # This cosine annealing schedule mimics the natural decay of a quantum system's energy.
-    def get_lr(it):
-        # 1) Linear warmup for initial "thermalization."
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) If beyond max_iters, maintain the minimum "energy" state.
-        if it > max_iters:
-            return min_learning_rate
-        # 3) Cosine decay: A smooth, wave-like reduction of "momentum."
-        decay_ratio = (it - warmup_iters) / (max_iters - warmup_iters)
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # Coefficient ranges from 1.0 to 0.0.
-        return min_learning_rate + coeff * (learning_rate - min_learning_rate)
-
+    # Inspired by the adaptive nature of quantum phenomena, we shall implement an adaptive learning rate.
+    # We must allow for initial exploration, then a gradual refinement.
+    learning_rate = 6e-4  # Maximum learning rate (initial impulse).
+    min_learning_rate = learning_rate * 0.1  # The 'ground state' or minimum impulse.
+    warmup_iters = 100  # A brief period of 'quantum excitation' to initialize.
+    lr_decay_iters = max_iters # The full duration of the 'decay' process.
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -67,17 +47,34 @@ def train():
         y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
         return x, y
 
+    # Function to determine the learning rate based on the current iteration,
+    # mimicking a system's evolution from high energy to a more stable state.
+    def get_lr(it):
+        # Linear warmup phase: a gentle ascent of initial 'energy'.
+        if it < warmup_iters:
+            return learning_rate * it / warmup_iters
+        # If beyond the decay period, settle to the 'minimum energy state'.
+        if it > lr_decay_iters:
+            return min_learning_rate
+        # Cosine decay: a smooth, wave-like transition towards equilibrium.
+        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
+        assert 0 <= decay_ratio <= 1
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # Coefficient follows a cosine path.
+        return min_learning_rate + coeff * (learning_rate - min_learning_rate)
 
-    # Initializing the model, now with a specified level of "quantum uncertainty" (dropout).
+
+    # We introduce 'dropout' (quantum fluctuations) to prevent the network from
+    # becoming too deterministic and over-reliant on precise, individual 'measurements.'
+    # This fosters a more robust, probabilistic understanding.
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
-                          vocab_size=50304, bias=False, dropout=model_dropout)).to(device)
+                          vocab_size=50304, bias=False, dropout=0.1)).to(device) # <--- Modified dropout
     optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Adjust the learning rate at each step, a continuous evolution of the system's "state."
+        # Adjust the 'impetus' (learning rate) for this iteration based on our quantum schedule.
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -87,21 +84,17 @@ def train():
         with ctx:
             _, loss = model(X, Y)
         loss.backward()
-        # Gradient clipping, akin to ensuring the "momentum" of parameter changes remains bounded,
-        # preventing them from flying off into an undefined state.
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
         optim.zero_grad(set_to_none=True)
 
-        # Periodic observation (evaluation): Just as measurement affects a quantum system,
-        # evaluating the model provides crucial information about its "collapsed" state,
-        # guiding further evolution.
+        # This periodic 'observation' (evaluation) is necessary to understand the system's current state.
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Report learning rate for insight.
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.6f}') # Added LR to print for observation
             if vloss < best_vloss:
                 best_vloss = vloss
 

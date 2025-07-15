@@ -15,7 +15,7 @@ def train():
     n_layer = 4
     n_head = 4
     n_embd = 32
-    max_iters = 10001
+    max_iters = 10001 # This must remain the upper bound for iterations
 
     # plain data loader (pre-load into RAM once), not to be changed
     data_dir = "/Users/kevindsouza/Documents/Obsidian_Vault/Companies/SymboliaLabs/research/DreamTeam/data"
@@ -33,25 +33,30 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # The maximum learning rate, which will now be decayed
+    learning_rate = 3e-4
 
-    # Function to compute the current learning rate using a cosine schedule
+    # Parameters for the learning rate schedule (cosine decay with warmup)
+    warmup_iters = 100 # Initial iterations for linear learning rate ramp-up
+    lr_decay_iters = max_iters # Total iterations over which learning rate decays
+    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to (1/10th of max)
+
+    # Function to calculate the dynamic learning rate based on iteration
     def get_lr(it):
         # 1) linear warmup for warmup_iters steps
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
+        # 2) if it > lr_decay_iters, return min_lr
+        #    (This handles cases where the loop runs beyond the decay schedule, though here lr_decay_iters = max_iters)
         if it > lr_decay_iters:
             return min_lr
-        # 3) in between, use cosine decay down to min learning rate
+        # 3) in between, use cosine decay down to min_lr
         decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
+        # Ensure ratio is within bounds for cosine calculation
+        decay_ratio = max(0.0, min(1.0, decay_ratio))
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
         return min_lr + coeff * (learning_rate - min_lr)
+
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -60,18 +65,18 @@ def train():
         y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
         return x, y
 
-
+    # Introducing a small dropout for regularization, as observed in nature's designs
+    # for robustness against overfitting.
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
-                          vocab_size=50304, bias=False, dropout=0.0)).to(device)
+                          vocab_size=50304, bias=False, dropout=0.1)).to(device) # Dropout changed to 0.1
     
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
+        # Determine and set the learning rate for this iteration based on cosine decay
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -85,13 +90,14 @@ def train():
         optim.step()
         optim.zero_grad(set_to_none=True)
 
-        # this should still happen every 100 iterations
+        # This should still happen every 100 iterations for observation
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            # Print current status, much like logging observations in a notebook
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f} (lr={lr:.1e})')
             if vloss < best_vloss:
                 best_vloss = vloss
 

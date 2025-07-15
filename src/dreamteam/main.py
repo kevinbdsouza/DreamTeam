@@ -45,20 +45,53 @@ def parse_python_blocks(response_text, original_train_mps_code, original_model_p
         except SyntaxError:
             return False
     
+    # Check if both code blocks are invalid/empty - if so, return None to indicate this candidate should be ignored
+    train_mps_invalid = not is_valid_python(new_train_mps_code)
+    model_py_invalid = not is_valid_python(new_model_py_code)
+    
+    if train_mps_invalid and model_py_invalid:
+        print("  Warning: Both train_mps.py and model.py code blocks are invalid or empty, ignoring this candidate")
+        return None, None
+    
     # Use original code if new code is invalid or empty
-    if not is_valid_python(new_train_mps_code):
+    if train_mps_invalid:
         print("  Warning: Invalid or empty train_mps.py code block, using original")
         new_train_mps_code = original_train_mps_code
     
-    if not is_valid_python(new_model_py_code):
+    if model_py_invalid:
         print("  Warning: Invalid or empty model.py code block, using original")
         new_model_py_code = original_model_py_code
     
     return new_train_mps_code, new_model_py_code
 
-def run_dreamteam_workflow():
+def load_prompts_from_mode(mode):
+    """
+    Load prompts from a specific mode directory.
+    Returns a dictionary mapping prompt names to their content.
+    """
+    prompts = {}
+    mode_dir = f"prompts/{mode}"
+    
+    if not os.path.exists(mode_dir):
+        print(f"Warning: Mode directory '{mode_dir}' does not exist")
+        return prompts
+    
+    prompt_files = os.listdir(mode_dir)
+    for file_name in prompt_files:
+        if file_name.endswith('.txt'):
+            with open(f"{mode_dir}/{file_name}", "r") as f:
+                prompt_name = f"{mode}_{file_name.replace('.txt', '')}"
+                prompts[prompt_name] = f.read()
+    
+    return prompts
+
+def run_dreamteam_workflow(modes=None):
     """
     This is the main function that orchestrates the DreamTeam workflow.
+    
+    Args:
+        modes: List of modes to use. If None, uses all available modes.
+               Available modes: ['savant', 'collaborator', 'specialist']
     """
     shutil.copyfile("dreamteam_generations/gen_1/baseline/train_mps.py", "train_mps.py")
     shutil.copyfile("dreamteam_generations/gen_1/baseline/model.py", "model.py")
@@ -72,10 +105,19 @@ def run_dreamteam_workflow():
 
     # --- Load Prompts and Code ---
     prompts = {}
-    prompt_files = os.listdir("prompts")
-    for file_name in prompt_files[:2]:
-        with open(f"prompts/{file_name}", "r") as f:
-            prompts[file_name.replace(".txt", "")] = f.read()
+    
+    # If no modes specified, use all available modes
+    if modes is None:
+        modes = ['savant', 'collaborator', 'specialist']
+    
+    # Load prompts from each specified mode
+    for mode in modes:
+        mode_prompts = load_prompts_from_mode(mode)
+        prompts.update(mode_prompts)
+        print(f"Loaded {len(mode_prompts)} prompts from {mode} mode")
+
+    if not prompts:
+        raise ValueError("No prompts found in any of the specified modes")
 
     with open("train_mps.py", "r") as f:
         train_mps_code = f.read()
@@ -99,11 +141,20 @@ def run_dreamteam_workflow():
             full_prompt = f"{prompt}\n\nHere is the existing implementation:\n\n`train_mps.py`:\n```python\n{train_mps_code}\n```\n\n`model.py`:\n```python\n{model_py_code}\n```\n\nProvide your modified code in separate Python code blocks. If you don't modify a file, include an empty Python block for it.\n\n```python\ntrain_mps.py\n# Your modified train_mps.py code here\n```\n\n```python\nmodel.py\n# Your modified model.py code here\n```"
 
             # Generate the candidate code
-            response = model.generate_content(full_prompt)
+            try:
+                response = model.generate_content(full_prompt)
+            except Exception as e:
+                print(f"  Error generating content from {name}: {e}")
+                continue
 
             # --- Parse the response ---
             try:
                 new_train_mps_code, new_model_py_code = parse_python_blocks(response.text, train_mps_code, model_py_code)
+
+                # Skip this candidate if both code blocks are invalid
+                if new_train_mps_code is None and new_model_py_code is None:
+                    print(f"  Skipping candidate from {name} due to invalid code blocks")
+                    continue
 
                 candidates.append({
                     "name": name,
@@ -210,4 +261,11 @@ def run_dreamteam_workflow():
 
 
 if __name__ == "__main__":
+    # Run with all modes by default
     run_dreamteam_workflow()
+    
+    # To run with specific modes only, uncomment and modify:
+    # run_dreamteam_workflow(modes=['savant'])  # Only historical geniuses
+    # run_dreamteam_workflow(modes=['collaborator'])  # Only research collaborators
+    # run_dreamteam_workflow(modes=['specialist'])  # Only field specialists
+    # run_dreamteam_workflow(modes=['savant', 'collaborator'])  # Mix of modes

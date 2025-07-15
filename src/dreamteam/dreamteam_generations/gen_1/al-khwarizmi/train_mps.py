@@ -33,65 +33,74 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # Al-Khwarizmi's Refinements for Systematic Convergence:
+    # 1. A slightly higher initial learning rate, to allow for bolder steps in the early exploration.
+    learning_rate = 6e-4 # The peak learning rate, to be modulated by schedule.
+    # 2. Reduced weight decay. A less aggressive penalty ensures the model can learn
+    #    more nuanced patterns without excessive regularization, finding a better 'balance'.
+    weight_decay = 0.01 # A more balanced regularization.
 
-    # Function to compute the current learning rate using a cosine schedule
+    # Algorithmic control of the learning rate: Cosine Decay with Warmup.
+    # This precisely defines the "step size" at each iteration,
+    # moving from exploration to fine-tuning, much like refining an algebraic solution.
+    decay_lr = True
+    warmup_iters = 100  # Number of iterations for linear warm-up.
+    lr_decay_iters = max_iters # Total iterations over which the learning rate will decay.
+    min_lr = learning_rate * 0.05 # The learning rate floor, a small final step size.
+
     def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
+        # 1) Linear warm-up: Gradually increase learning rate from 0 to peak.
+        # This initial cautious exploration prevents early instability.
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
+        # 2) If beyond the decay period, maintain the minimum learning rate.
+        # This ensures the process does not halt entirely.
         if it > lr_decay_iters:
             return min_lr
-        # 3) in between, use cosine decay down to min learning rate
+        # 3) Cosine decay: A smooth, systematic reduction of the learning rate.
+        # This mirrors the gradual refinement in solving an algebraic equation,
+        # moving from broad estimation to precise calculation.
         decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # Cosine function for smooth decay.
         return min_lr + coeff * (learning_rate - min_lr)
-
-    def get_batch(split):
-        data = train_data if split == 'train' else val_data
-        ix = torch.randint(len(data) - block_size, (batch_size,), device=device)
-        x = torch.stack([data[i:i + block_size] for i in ix]).to(device)
-        y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
-        return x, y
 
 
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    optim = model.configure_optimizers(weight_decay=weight_decay, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
-        for param_group in optim.param_groups:
-            param_group['lr'] = lr
+        # Apply the current learning rate as determined by our systematic schedule.
+        if decay_lr:
+            lr = get_lr(it)
+            for param_group in optim.param_groups:
+                param_group['lr'] = lr
 
         model.train()
         X, Y = get_batch('train')
         with ctx:
             _, loss = model(X, Y)
         loss.backward()
+        # Gradient clipping is an essential numerical stabilization technique,
+        # preventing excessively large "steps" that could destabilize the optimization process,
+        # akin to ensuring our calculations remain within sensible bounds.
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
         optim.zero_grad(set_to_none=True)
 
-        # this should still happen every 100 iterations
+        # This systematic evaluation every 100 iterations provides checkpoints
+        # to assess the model's convergence and track the best outcome,
+        # much like verifying intermediate results in a complex calculation.
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

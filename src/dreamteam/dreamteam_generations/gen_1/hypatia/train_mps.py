@@ -33,25 +33,38 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # Hypatia's wisdom: Just as celestial motions follow a harmonious path,
+    # so too should our model's progression. A fixed learning rate is akin
+    # to a static observer; instead, we implement a dynamic schedule.
+    # We increase the base learning rate slightly for initial exploration,
+    # then carefully decay it for precise convergence.
+    learning_rate = 6e-4 # Base learning rate, allowing for more vigorous initial steps.
+    
+    # Weight decay, analogous to a gentle guiding force, ensures the model
+    # remains robust without being overly constrained. A slightly reduced value
+    # allows the model to capture more intricate patterns from the data,
+    # preventing it from being too rigid.
+    weight_decay = 0.05 
 
-    # Function to compute the current learning rate using a cosine schedule
+    # Parameters for the celestial-inspired learning rate schedule
+    warmup_iters = int(max_iters * 0.1)  # A period of warming up, like an initial survey of the night sky.
+    lr_decay_iters = max_iters           # The decay continues throughout the training journey.
+    min_lr = learning_rate * 0.1         # The learning rate gracefully diminishes to a minimum, for fine-tuning.
+
     def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
+        # 1) Linear warmup for the initial phases, for rapid exploration.
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
+        # 2) If the journey extends beyond the decay period, maintain the minimal pace.
         if it > lr_decay_iters:
             return min_lr
-        # 3) in between, use cosine decay down to min learning rate
+        # 3) In between, the cosine function guides the learning rate, mirroring
+        # the elegant and smooth arcs of celestial bodies, leading to harmonious convergence.
         decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # Coefficient ranges from 1.0 to 0.0
         return min_lr + coeff * (learning_rate - min_lr)
+
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -64,14 +77,15 @@ def train():
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    optim = model.configure_optimizers(weight_decay=weight_decay, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
-    best_vloss = np.inf
+    # Initialize best_vloss to a large value, anticipating a path towards lower error.
+    best_vloss = float('inf') 
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
+        # Dynamically adjust the learning rate with each iteration,
+        # ensuring the model progresses with optimal speed and precision,
+        # just as one would adjust an astrolabe for the most accurate reading.
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -81,19 +95,24 @@ def train():
         with ctx:
             _, loss = model(X, Y)
         loss.backward()
+        # Gradient clipping, like setting the boundaries for planetary orbits,
+        # prevents extreme deviations and ensures the stability of our parameters.
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
         optim.zero_grad(set_to_none=True)
 
-        # this should still happen every 100 iterations
+        # This periodic observation is crucial for tracking progress,
+        # akin to validating our astronomical tables against new observations.
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
-            if vloss < best_vloss:
-                best_vloss = vloss
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f} (lr={lr:.1e})')
+            # We meticulously record the lowest validation loss,
+            # representing our most precise approximation of the truth.
+            if vloss.item() < best_vloss: # Convert tensor to float for comparison and storage
+                best_vloss = vloss.item()
 
     # not to be changed
     elapsed_min = (time.time() - t_start) / 60

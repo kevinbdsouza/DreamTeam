@@ -33,25 +33,10 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
-
-    # Function to compute the current learning rate using a cosine schedule
-    def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+    # Euclid's adjustment: The learning rate, much like the precision of a compass,
+    # must be carefully chosen. For this relatively compact construction (model size),
+    # a slightly larger yet still measured step can lead to quicker and more accurate convergence.
+    learning_rate = 5e-4 # Adjusted from 3e-4 to 5e-4
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -60,22 +45,23 @@ def train():
         y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
         return x, y
 
-
+    # Euclid's adjustment: We introduce a slight perturbation, a "dropout,"
+    # akin to adding a degree of resilience to our geometric forms. This prevents
+    # them from becoming overly specialized to individual training examples,
+    # thus enhancing their generality and robustness (improving validation performance).
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
-                          vocab_size=50304, bias=False, dropout=0.0)).to(device)
+                          vocab_size=50304, bias=False, dropout=0.1)).to(device) # Adjusted dropout from 0.0 to 0.1
     
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    # Euclid's adjustment: The weight decay, or the "penalty for complexity,"
+    # was perhaps too stringent (0.1). A more moderate penalty (0.01) allows
+    # our construction to take on necessary intricacy without becoming overly
+    # constrained, finding a better balance between simplicity and accuracy.
+    optim = model.configure_optimizers(weight_decay=0.01, learning_rate=learning_rate, # Adjusted weight_decay from 0.1 to 0.01
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
-        for param_group in optim.param_groups:
-            param_group['lr'] = lr
-
         model.train()
         X, Y = get_batch('train')
         with ctx:
@@ -91,7 +77,7 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

@@ -33,24 +33,31 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # The learning rate: This is like the "energy" we give our particle to explore the landscape.
+    # A fixed energy is not efficient. We need to adjust it dynamically.
+    learning_rate = 3e-4 # This will now be our maximum learning rate.
+    min_lr = learning_rate * 0.1 # Let's not go to zero; leave a little 'thermal energy' for exploration.
+    warmup_iters = 100 # A gentle linear warm-up, like slowly accelerating a particle.
+    lr_decay_iters = max_iters # The full decay will span the entire training.
 
-    # Function to compute the current learning rate using a cosine schedule
+    # Gradient accumulation: Instead of acting on a single, noisy "measurement" (batch),
+    # we'll gather information from multiple "measurements" before making a move.
+    # This averages out the "quantum fluctuations" in the gradient, giving us a clearer "path direction."
+    gradient_accumulation_steps = 4 # Effectively quadrupling our batch size without using more memory at once.
+
+    # This function determines the "energy" (learning rate) for our particle at each step.
+    # It starts low, warms up, then slowly decays, allowing broad exploration then fine-tuning.
     def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
+        # 1) linear warmup for warmup_iters steps, preventing early instability
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
+        # 2) if it > lr_decay_iters, we've settled, return minimum learning rate
         if it > lr_decay_iters:
             return min_lr
-        # 3) in between, use cosine decay down to min learning rate
+        # 3) in between, use cosine decay, guiding our particle towards the minimum
         decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # This smooth curve is like a gentle push
         return min_lr + coeff * (learning_rate - min_lr)
 
     def get_batch(split):
@@ -64,14 +71,12 @@ def train():
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max_lr
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
+        # Determine and set the learning rate for this iteration, dynamically!
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -80,10 +85,20 @@ def train():
         X, Y = get_batch('train')
         with ctx:
             _, loss = model(X, Y)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optim.step()
-        optim.zero_grad(set_to_none=True)
+        
+        # Scale the loss for gradient accumulation. This averages the gradient over multiple steps,
+        # like taking a more precise measurement before adjusting our trajectory.
+        loss = loss / gradient_accumulation_steps 
+        
+        loss.backward() # Compute the gradients (the "force" guiding our particle)
+
+        # Only step the optimizer and zero gradients after accumulating enough.
+        # This is when we actually move the "particle" in parameter space.
+        if (it + 1) % gradient_accumulation_steps == 0 or it == max_iters - 1:
+            # Clip the gradients to prevent "runaway" paths or instabilities.
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optim.step() # Take a step in the direction of the accumulated gradient
+            optim.zero_grad(set_to_none=True) # Clear the forces for the next measurement cycle
 
         # this should still happen every 100 iterations
         if it % 100 == 0:
@@ -91,7 +106,8 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            # When logging, we'll show the "true" batch loss, scaled back up
+            print(f'{it}: train {loss.item() * gradient_accumulation_steps:.3f}  val {vloss.item():.3f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

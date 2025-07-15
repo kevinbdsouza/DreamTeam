@@ -33,25 +33,10 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
-
-    # Function to compute the current learning rate using a cosine schedule
-    def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+    # Pythagoras: The learning rate should reflect the very structure of the model.
+    # A product of embedding dimension and block size, expressed as a power of two in the denominator.
+    # This is 1 / (32 * 64) = 1 / 2048, a clear and fundamental numerical relationship.
+    learning_rate = 1.0 / (n_embd * block_size)
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -65,17 +50,18 @@ def train():
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
     
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
-                                       betas=(0.9, 0.95), device_type='mps')
+    # Pythagoras: Weight decay remains at 1/10, a simple and balanced ratio.
+    weight_decay = 0.1
+    
+    # Pythagoras: The betas for the optimizer should reflect harmonic proportions derived from the model's core dimensions.
+    # These are 1 - 1/n_embd (31/32) and 1 - 1/block_size (63/64), values of pure numerical origin.
+    betas = (1.0 - 1.0/n_embd, 1.0 - 1.0/block_size)
+    
+    optim = model.configure_optimizers(weight_decay=weight_decay, learning_rate=learning_rate,
+                                       betas=betas, device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
-        for param_group in optim.param_groups:
-            param_group['lr'] = lr
-
         model.train()
         X, Y = get_batch('train')
         with ctx:
@@ -91,7 +77,7 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

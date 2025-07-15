@@ -33,25 +33,17 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
-
-    # Function to compute the current learning rate using a cosine schedule
-    def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+    # Fibonacci's insight: The path to enlightenment (low loss) is not a straight line.
+    # It requires adapting the step size as we approach the truth.
+    # Let the maximum learning rate be 'learning_rate_max'.
+    learning_rate_max = 3e-4 # Retain the previous learning rate as the peak.
+    
+    # A smaller weight decay: The penalty for overly large numbers (weights)
+    # was perhaps too harsh. Reducing it from 0.1 to 0.01 allows the model
+    # more flexibility to learn intricate patterns without being excessively
+    # constrained, much like allowing a plant to grow naturally while still
+    # pruning only the truly errant branches.
+    weight_decay = 0.01
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -60,19 +52,25 @@ def train():
         y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
         return x, y
 
-
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
     
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    # Pass the initial, maximum learning rate to the optimizer.
+    # The actual learning rate will be modulated dynamically.
+    optim = model.configure_optimizers(weight_decay=weight_decay, learning_rate=learning_rate_max,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
+        # Fibonacci's cosine learning rate schedule: a smooth, natural progression.
+        # The learning rate starts high and gently descends, much like the
+        # diminishing returns on a long journey, allowing for fine-tuning
+        # as the destination (minimum loss) is neared. This prevents overshooting
+        # and allows for precise convergence, akin to finding the precise
+        # calculation for a complex trade, or the perfect placement of a tile.
+        coeff = 0.5 * (1.0 + math.cos(math.pi * it / max_iters))
+        lr = learning_rate_max * coeff
         for param_group in optim.param_groups:
             param_group['lr'] = lr
 
@@ -85,13 +83,14 @@ def train():
         optim.step()
         optim.zero_grad(set_to_none=True)
 
-        # this should still happen every 100 iterations
+        # This reporting mechanism remains unchanged, for it is good to observe progress.
+        # However, I shall add the current learning rate to our ledger.
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.6f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

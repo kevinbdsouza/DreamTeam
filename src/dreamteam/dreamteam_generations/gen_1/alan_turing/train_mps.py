@@ -33,13 +33,15 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # Initial learning rate (this will be the maximum learning rate in our schedule)
+    learning_rate = 3e-4
+    # Define learning rate schedule parameters for cosine decay
+    min_lr = learning_rate * 0.1 # Minimum learning rate, a tenth of the max
+    warmup_iters = 100 # Warmup over the first 100 iterations to stabilize initial gradients
+    lr_decay_iters = max_iters # Decay over the full training duration
 
-    # Function to compute the current learning rate using a cosine schedule
+    # A function to compute the learning rate for a given iteration,
+    # employing a cosine decay schedule with a linear warmup.
     def get_lr(it):
         # 1) linear warmup for warmup_iters steps
         if it < warmup_iters:
@@ -50,8 +52,9 @@ def train():
         # 3) in between, use cosine decay down to min learning rate
         decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges from 1.0 down to 0.0
         return min_lr + coeff * (learning_rate - min_lr)
+
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -60,18 +63,19 @@ def train():
         y = torch.stack([data[i + 1:i + 1 + block_size] for i in ix]).to(device)
         return x, y
 
-
+    # Increase dropout from 0.0 to 0.1. This regularization technique
+    # helps prevent the model from overfitting to the training data,
+    # fostering the discovery of more generalizable patterns, much like
+    # a robust cryptanalysis method should not collapse from minor noise.
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
-                          vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+                          vocab_size=50304, bias=False, dropout=0.1)).to(device)
+    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
+        # Determine and set the learning rate for this iteration using the schedule
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -91,7 +95,8 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            # Print the current learning rate for observation, aiding in diagnosing convergence.
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

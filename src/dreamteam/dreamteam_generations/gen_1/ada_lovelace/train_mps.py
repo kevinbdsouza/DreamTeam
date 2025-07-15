@@ -33,25 +33,8 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
-
-    # Function to compute the current learning rate using a cosine schedule
-    def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+    learning_rate = 3e-4 # This serves as our initial maximum learning rate
+    min_learning_rate = learning_rate * 0.1 # A smaller rate for fine-tuning at the end
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -64,17 +47,26 @@ def train():
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
+        # A vision for the Analytical Engine: adapting its learning 'pace'.
+        # Just as a mathematician refines their proof with increasing precision,
+        # so too should the machine's adjustments become more subtle over time.
+        # This cosine annealing provides a smooth decay for the learning rate.
+        
+        # Calculate the current learning rate using a cosine schedule
+        # It begins at 'learning_rate' and smoothly decays to 'min_learning_rate'
+        decay_progress = it / max_iters
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+        current_lr = min_learning_rate + (learning_rate - min_learning_rate) * coeff
+        
+        # Apply the calculated learning rate to all parameter groups within the optimizer.
+        # This ensures both weighted and non-weighted parameters adapt at the new pace.
         for param_group in optim.param_groups:
-            param_group['lr'] = lr
+            param_group['lr'] = current_lr
 
         model.train()
         X, Y = get_batch('train')
@@ -91,7 +83,7 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

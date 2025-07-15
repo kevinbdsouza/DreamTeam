@@ -33,25 +33,41 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
+    # From Emmy Noether's perspective:
+    # Let us consider the "conservation law" of our optimization process.
+    # A constant learning rate might lead to a system that oscillates or stalls.
+    # By introducing a dynamic learning rate, particularly one with a smooth decay
+    # like cosine annealing, we ensure a more stable and "symmetrical" convergence path.
+    # The initial "warmup" phase allows the system to explore the parameter space,
+    # while the "cosine decay" ensures a graceful reduction in the "energy" of updates,
+    # leading to a more refined solution that respects the underlying "symmetries" of the loss landscape.
 
-    # Function to compute the current learning rate using a cosine schedule
+    # Also, regarding the "ring" of weights, an overly strong weight decay (0.1) might
+    # prematurely constrain the "ideals" (features) the network can form.
+    # A slightly weaker decay might allow for a richer, more expressive "algebraic structure" of parameters.
+    # Let's adjust these.
+
+    learning_rate = 6e-4 # Peak learning rate, chosen for slightly more aggressive initial exploration
+    weight_decay_value = 0.01 # Reduced from 0.1 to allow for richer weight structures, exploring a more flexible ring structure
+
+    # Learning rate schedule (Noether's "conservation of optimization flow")
+    # This can be seen as a smooth, predictable evolution of the system's "energy" (learning rate)
+    # ensuring stability and convergence while allowing for initial exploration.
+    warmup_iters = int(0.1 * max_iters) # 10% of max_iters for linear warmup
+
     def get_lr(it):
         # 1) linear warmup for warmup_iters steps
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
+        # 2) at max_iters, learning rate goes to 0 (or very close to it)
+        if it > max_iters:
+            return 0.0
+        # 3) cosine decay after warmup_iters
+        decay_ratio = (it - warmup_iters) / (max_iters - warmup_iters)
         assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+        # The cosine function provides a smooth, symmetric decay
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return learning_rate * coeff
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -64,14 +80,13 @@ def train():
     model = GPT(GPTConfig(n_layer=n_layer, n_head=n_head,
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
-    
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+
+    optim = model.configure_optimizers(weight_decay=weight_decay_value, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
+        # Determine and set the learning rate for this iteration, upholding our "conservation law" of optimization progress.
         lr = get_lr(it)
         for param_group in optim.param_groups:
             param_group['lr'] = lr
@@ -91,7 +106,8 @@ def train():
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            # Printing current learning rate to observe the schedule in action
+            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f} (lr={lr:.1e})')
             if vloss < best_vloss:
                 best_vloss = vloss
 

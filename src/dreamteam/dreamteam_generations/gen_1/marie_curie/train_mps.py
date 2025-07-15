@@ -2,7 +2,7 @@ import torch, os, time, math, pickle, numpy as np
 from contextlib import nullcontext
 from model import GPT, GPTConfig
 import time
-
+import torch.optim as optim # Import optim module for scheduler
 
 def train():
     # --- should not change -----------------------------
@@ -33,25 +33,8 @@ def train():
     # -------------------------------------------------------------------
     # anything below this can be changed
 
-    # The initial maximum learning rate, which will decay
-    learning_rate = 3e-4 # Used as max_lr
-    min_lr = learning_rate * 0.1 # Minimum learning rate to decay to
-    warmup_iters = 100 # Initial linear warmup steps
-    lr_decay_iters = max_iters # Total iterations over which to decay LR
-
-    # Function to compute the current learning rate using a cosine schedule
-    def get_lr(it):
-        # 1) linear warmup for warmup_iters steps
-        if it < warmup_iters:
-            return learning_rate * it / warmup_iters
-        # 2) if it > lr_decay_iters, return min learning rate
-        if it > lr_decay_iters:
-            return min_lr
-        # 3) in between, use cosine decay down to min learning rate
-        decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 1.0 -> 0.0
-        return min_lr + coeff * (learning_rate - min_lr)
+    learning_rate = 3e-4 # Initial learning rate for the scheduler
+    gradient_accumulation_steps = 4 # Accumulate gradients over 4 batches to simulate a larger batch size
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
@@ -65,33 +48,46 @@ def train():
                           n_embd=n_embd, block_size=block_size,
                           vocab_size=50304, bias=False, dropout=0.0)).to(device)
     
-    # Optimizer is initialized once
-    optim = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate, # learning_rate here is the initial max
+    # Initialize optimizer with the base learning rate
+    optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=learning_rate,
                                        betas=(0.9, 0.95), device_type='mps')
+
+    # Learning rate scheduler: Cosine Annealing
+    # T_max is the total number of iterations over which the learning rate will decay.
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_iters)
 
     best_vloss = np.inf
     for it in range(max_iters):
-        # Update the learning rate for the current iteration
-        lr = get_lr(it)
-        for param_group in optim.param_groups:
-            param_group['lr'] = lr
-
         model.train()
         X, Y = get_batch('train')
+        
         with ctx:
             _, loss = model(X, Y)
+            # Scale the loss by gradient_accumulation_steps.
+            # This ensures that the effective gradient magnitude for a 'larger batch' is consistent.
+            loss = loss / gradient_accumulation_steps
+        
+        # Backward pass to accumulate gradients
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optim.step()
-        optim.zero_grad(set_to_none=True)
 
-        # this should still happen every 100 iterations
+        # Only perform optimizer step and zero gradients when accumulation is complete
+        # This is where we apply the "averaged" gradient from multiple small batches.
+        if (it + 1) % gradient_accumulation_steps == 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            # Update learning rate after the optimizer step
+            scheduler.step() # Advance the learning rate scheduler
+
+        # This should still happen every 100 iterations.
+        # We print the unscaled loss (multiplied by accumulation steps) for better interpretability.
         if it % 100 == 0:
             model.eval()
             with torch.no_grad():
                 Xv, Yv = get_batch('val')
                 _, vloss = model(Xv, Yv)
-            print(f'{it}: train {loss.item():.3f}  val {vloss.item():.3f}  lr {lr:.2e}') # Added LR to print
+            # Print the scaled training loss for better reporting (undoing the division for accumulation)
+            print(f'Iter {it}/{max_iters-1}: train_loss={loss.item() * gradient_accumulation_steps:.3f}  val_loss={vloss.item():.3f}  lr={optimizer.param_groups[0]["lr"]:.6f}')
             if vloss < best_vloss:
                 best_vloss = vloss
 

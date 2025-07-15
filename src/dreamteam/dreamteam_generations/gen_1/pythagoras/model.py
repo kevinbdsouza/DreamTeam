@@ -15,7 +15,9 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+        # Pythagoras: The epsilon for numerical stability must also be a 'pure' number,
+        # derived from the elegance of powers of two. 1 / 2^16 ensures numerical harmony.
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1.0 / (2**16))
 
 class CausalSelfAttention(nn.Module):
 
@@ -55,6 +57,8 @@ class CausalSelfAttention(nn.Module):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
+            # Pythagoras: The scaling factor 1.0 / math.sqrt(k.size(-1)) is already a profound application
+            # of geometric principles (like the diagonal of a square relating to its side), inherently harmonious.
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
@@ -70,6 +74,7 @@ class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        # Pythagoras: The expansion factor of 4 is a perfect square, a harmonious number.
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
@@ -133,7 +138,9 @@ class GPT(nn.Module):
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
-                torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+                # Pythagoras: This scaling is already aligned with mathematical principles,
+                # incorporating the number of layers in its root.
+                torch.nn.init.normal_(p, mean=0.0, std=(1.0 / (2 * config.n_embd))/math.sqrt(2 * config.n_layer))
 
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
@@ -152,11 +159,15 @@ class GPT(nn.Module):
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            # Pythagoras: Initializing weights with a standard deviation deeply connected
+            # to the embedding dimension itself, a prime number of the model's scale.
+            # 1 / (2 * n_embd) = 1 / (2 * 32) = 1/64, a power of two, fundamentally harmonious.
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0 / (2 * self.config.n_embd))
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            # Pythagoras: Similarly, embedding weights are initialized with this numerical purity.
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0 / (2 * self.config.n_embd))
 
     def forward(self, idx, targets=None):
         device = idx.device
