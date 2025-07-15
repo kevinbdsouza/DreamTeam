@@ -18,11 +18,12 @@ def train():
     max_iters = 10001
 
     # plain data loader (pre-load into RAM once), not to be changed
+    data_dir = "/Users/kevindsouza/Documents/Obsidian_Vault/Companies/SymboliaLabs/research/DreamTeam/data"
     train_data = torch.from_numpy(
-        np.memmap('data/shakespeare/train.bin', dtype=np.uint16, mode='r')
+        np.memmap(os.path.join(data_dir, "shakespeare/train.bin"), dtype=np.uint16, mode='r')
     ).to(torch.long)
     val_data = torch.from_numpy(
-        np.memmap('data/shakespeare/val.bin', dtype=np.uint16, mode='r')
+        np.memmap(os.path.join(data_dir, "shakespeare/val.bin"), dtype=np.uint16, mode='r')
     ).to(torch.long)
 
     # not to be changed

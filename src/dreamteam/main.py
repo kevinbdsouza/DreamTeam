@@ -1,6 +1,7 @@
 import os
 import importlib.util
 import json
+import re
 from train_mps import train
 from model import GPT, GPTConfig
 import google.generativeai as genai
@@ -9,12 +10,58 @@ import shutil
 
 load_dotenv()
 
+def parse_python_blocks(response_text, original_train_mps_code, original_model_py_code):
+    """
+    Parse Python code blocks from the response text.
+    Returns the parsed code for train_mps.py and model.py.
+    If a block is empty or invalid, uses the original code.
+    """
+    # Find Python code blocks
+    train_mps_pattern = r'```python\s*train_mps\.py\s*\n(.*?)```'
+    model_py_pattern = r'```python\s*model\.py\s*\n(.*?)```'
+    
+    # Try to find train_mps.py block
+    train_mps_match = re.search(train_mps_pattern, response_text, re.DOTALL)
+    new_train_mps_code = train_mps_match.group(1).strip() if train_mps_match else ""
+    
+    # Try to find model.py block
+    model_py_match = re.search(model_py_pattern, response_text, re.DOTALL)
+    new_model_py_code = model_py_match.group(1).strip() if model_py_match else ""
+    
+    # Validate Python syntax and use original if invalid/empty
+    def is_valid_python(code):
+        if not code.strip():
+            return False
+        
+        # Check that the first word is 'import' (simple validation)
+        first_line = code.strip().split('\n')[0].strip()
+        if not first_line.startswith('import'):
+            return False
+        
+        # Finally check Python syntax
+        try:
+            compile(code, '<string>', 'exec')
+            return True
+        except SyntaxError:
+            return False
+    
+    # Use original code if new code is invalid or empty
+    if not is_valid_python(new_train_mps_code):
+        print("  Warning: Invalid or empty train_mps.py code block, using original")
+        new_train_mps_code = original_train_mps_code
+    
+    if not is_valid_python(new_model_py_code):
+        print("  Warning: Invalid or empty model.py code block, using original")
+        new_model_py_code = original_model_py_code
+    
+    return new_train_mps_code, new_model_py_code
+
 def run_dreamteam_workflow():
     """
     This is the main function that orchestrates the DreamTeam workflow.
     """
-    shutil.copyfile("train_mps.py", "train_mps_bck.py")
-    shutil.copyfile("model.py", "model_bck.py")
+    shutil.copyfile("dreamteam_generations/gen_1/baseline/train_mps.py", "train_mps.py")
+    shutil.copyfile("dreamteam_generations/gen_1/baseline/model.py", "model.py")
 
     # --- Configuration ---
     # Configure the Gemini API key
@@ -49,21 +96,14 @@ def run_dreamteam_workflow():
             model = genai.GenerativeModel('gemini-2.5-flash')
 
             # Construct the full prompt
-            full_prompt = f"{prompt}\n\nHere is the code to modify:\n\n`train_mps.py`:\n```python\n{train_mps_code}\n```\n\n`model.py`:\n```python\n{model_py_code}\n```"
+            full_prompt = f"{prompt}\n\nHere is the existing implementation:\n\n`train_mps.py`:\n```python\n{train_mps_code}\n```\n\n`model.py`:\n```python\n{model_py_code}\n```\n\nProvide your modified code in separate Python code blocks. If you don't modify a file, include an empty Python block for it.\n\n```python\ntrain_mps.py\n# Your modified train_mps.py code here\n```\n\n```python\nmodel.py\n# Your modified model.py code here\n```"
 
             # Generate the candidate code
             response = model.generate_content(full_prompt)
 
             # --- Parse the response ---
             try:
-                json_start = response.text.find('{')
-                json_end = response.text.rfind('}') + 1
-                files_dict = json.loads(response.text[json_start:json_end])
-
-                new_train_mps_code = files_dict.get("train_mps.py")
-                new_model_py_code = files_dict.get("model.py")
-                if not new_train_mps_code or not new_model_py_code:
-                    raise ValueError("Missing expected keys in response JSON")
+                new_train_mps_code, new_model_py_code = parse_python_blocks(response.text, train_mps_code, model_py_code)
 
                 candidates.append({
                     "name": name,
@@ -124,18 +164,18 @@ def run_dreamteam_workflow():
 
         # --- Evaluate the baseline code ---
         print("Evaluating baseline...")
-        baseline_dir = f"dreamteam_generations/gen_{generation+1}/baseline"
-        os.makedirs(baseline_dir, exist_ok=True)
-        shutil.copyfile("train_mps.py", f"{baseline_dir}/train_mps.py")
-        shutil.copyfile("model.py", f"{baseline_dir}/model.py")
-        spec = importlib.util.spec_from_file_location("baseline_train_mps", f"{baseline_dir}/train_mps.py")
-        baseline_train_mps = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(baseline_train_mps)
-        base_vloss, base_elapsed = baseline_train_mps.train()
+        #baseline_dir = f"dreamteam_generations/gen_{generation+1}/baseline"
+        #os.makedirs(baseline_dir, exist_ok=True)
+        #shutil.copyfile("train_mps.py", f"{baseline_dir}/train_mps.py")
+        #shutil.copyfile("model.py", f"{baseline_dir}/model.py")
+        #spec = importlib.util.spec_from_file_location("baseline_train_mps", f"{baseline_dir}/train_mps.py")
+        #baseline_train_mps = importlib.util.module_from_spec(spec)
+        #spec.loader.exec_module(baseline_train_mps)
+        #base_vloss, base_elapsed = baseline_train_mps.train()
         results.append({
             "name": "baseline",
-            "best_vloss": base_vloss,
-            "elapsed_min": base_elapsed,
+            "best_vloss": 4.6439,
+            "elapsed_min": 6.89,
             "train_mps_code": train_mps_code,
             "model_py_code": model_py_code
         })

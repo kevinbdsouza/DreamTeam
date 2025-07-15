@@ -18,7 +18,7 @@ def train():
     max_iters = 10001
 
     # plain data loader (pre-load into RAM once), not to be changed
-    data_dir = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "data"))
+    data_dir = "/Users/kevindsouza/Documents/Obsidian_Vault/Companies/SymboliaLabs/research/DreamTeam/data"
     train_data = torch.from_numpy(
         np.memmap(os.path.join(data_dir, "shakespeare/train.bin"), dtype=np.uint16, mode='r')
     ).to(torch.long)
@@ -76,6 +76,4 @@ def train():
 
     # this should be returned, should not change
     return best_vloss, elapsed_min
-
-train()
 

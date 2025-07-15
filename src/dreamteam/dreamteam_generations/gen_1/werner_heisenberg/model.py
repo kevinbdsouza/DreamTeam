@@ -1,13 +1,3 @@
-
-"""
-Full definition of a GPT Language Model, all of it in this single file.
-References:
-1) the official GPT-2 TensorFlow implementation released by OpenAI:
-https://github.com/openai/gpt-2/blob/master/src/model.py
-2) huggingface/transformers PyTorch implementation:
-https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
-"""
-
 import math
 import inspect
 from dataclasses import dataclass
@@ -113,7 +103,7 @@ class GPTConfig:
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
-    dropout: float = 0.0
+    dropout: float = 0.1 # Changed from 0.0: Introducing a default "quantum fluctuation" to the system.
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
 class GPT(nn.Module):
@@ -329,4 +319,3 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
-
