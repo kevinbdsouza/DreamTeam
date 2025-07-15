@@ -1,5 +1,6 @@
 import os
 import importlib.util
+import json
 from train_mps import train
 from model import GPT, GPTConfig
 import google.generativeai as genai
@@ -55,17 +56,21 @@ def run_dreamteam_workflow():
 
             # --- Parse the response ---
             try:
-                # Extract the code from the response
-                # TODO: This parsing is very basic and might need to be improved
-                new_train_mps_code = response.text.split("`train_mps.py`:\n```python")[1].split("```")[0]
-                new_model_py_code = response.text.split("`model.py`:\n```python")[1].split("```")[0]
+                json_start = response.text.find('{')
+                json_end = response.text.rfind('}') + 1
+                files_dict = json.loads(response.text[json_start:json_end])
+
+                new_train_mps_code = files_dict.get("train_mps.py")
+                new_model_py_code = files_dict.get("model.py")
+                if not new_train_mps_code or not new_model_py_code:
+                    raise ValueError("Missing expected keys in response JSON")
 
                 candidates.append({
                     "name": name,
                     "train_mps_code": new_train_mps_code,
                     "model_py_code": new_model_py_code
                 })
-            except (IndexError, AttributeError) as e:
+            except Exception as e:
                 print(f"  Error parsing response from {name}: {e}")
                 print(f"  Response: {response.text}")
 
@@ -115,6 +120,25 @@ def run_dreamteam_workflow():
                     "train_mps_code": candidate["train_mps_code"],
                     "model_py_code": candidate["model_py_code"]
                 })
+
+
+        # --- Evaluate the baseline code ---
+        print("Evaluating baseline...")
+        baseline_dir = f"dreamteam_generations/gen_{generation+1}/baseline"
+        os.makedirs(baseline_dir, exist_ok=True)
+        shutil.copyfile("train_mps.py", f"{baseline_dir}/train_mps.py")
+        shutil.copyfile("model.py", f"{baseline_dir}/model.py")
+        spec = importlib.util.spec_from_file_location("baseline_train_mps", f"{baseline_dir}/train_mps.py")
+        baseline_train_mps = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(baseline_train_mps)
+        base_vloss, base_elapsed = baseline_train_mps.train()
+        results.append({
+            "name": "baseline",
+            "best_vloss": base_vloss,
+            "elapsed_min": base_elapsed,
+            "train_mps_code": train_mps_code,
+            "model_py_code": model_py_code
+        })
 
 
         # --- Select the Best Candidates ---
